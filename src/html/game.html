@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+	<meta charset="UTF-8"/>
+	<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+	<link rel="stylesheet" href="../styles.css"/>
+	<title>Juego de la vida</title>
+</head>
+<body>
+	<style>
+
+		body {
+			display: flex;
+		}
+
+	</style>
+
+	<div id="menu">
+		<h2><button type="submit" onclick="getMarked()">Enviar</button></h2>
+	</div>
+	<div id="grid">
+	</div>
+
+	<script>
+
+		for (let i = 0; i < 100; i++) {
+			document.getElementById("grid").innerHTML += `
+				<input type="checkbox">
+			`;
+		}
+
+		const getMarked = () => {
+
+		const all = document.querySelectorAll('#grid input[type="checkbox"]');
+		const index_vector = Array.from(all).map((checkbox, index) => checkbox.checked ? index : null).filter(index => index !== null);
+
+		let positions = []
+
+		for (let i = 0; i < index.length; i++) {
+			//positions[] // Podría estar bien encontrar una manera elegante de para meter los elementos en matriz
+		}
+
+		console.log("Posiciones en el grid:", index_vector);
+	
+	};
+
+	</script>
+</body>
+</html>

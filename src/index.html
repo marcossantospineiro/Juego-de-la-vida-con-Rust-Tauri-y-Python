@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="./styles.css"/>
+	<title>Juego de la vida</title>
+</head>
+<body>
+	<form id="form">
+		<div>
+			<label>Nombre</label>
+			<input type="text" name="nombre" id="nombre">
+		</div>
+		<input type="submit" value="Ok">
+	</form>
+
+	<script>
+		const { invoke } = window.__TAURI__.core;
+
+		document.addEventListener("DOMContentLoaded", () => {
+			document.getElementById("form").addEventListener("submit", async (e) => {
+				e.preventDefault();
+
+				const name = document.getElementById("nombre").value;
+				await invoke("init", { name: name});
+
+				window.location.href = "html/menu.html";
+			});
+		});
+	</script>
+</body>
+</html>

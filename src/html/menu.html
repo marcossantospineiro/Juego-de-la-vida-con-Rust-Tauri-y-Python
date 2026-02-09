@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Juego de la vida</title>
+</head>
+<body>
+	<h1>Clientes conectados</h1>
+	<ul id="users_list">
+		
+	</ul>
+
+	<script>
+		const { invoke } = window.__TAURI__.core;
+
+		function request_party(name) {
+			let state = invoke("request_party", { name: name });
+
+			if (state) {
+				window.location.href = "game.html";
+			} else {
+				alert("Algo ha salido mal, el oponente puede estar desconectado o se ha caído la conexión con el servidor");
+			}
+		}
+
+		async function other_players() {
+			let names = await invoke("other_players");
+			return names;
+		}
+
+		async function get_new_players() {
+			let names = await other_players();
+
+			if (names.length == 0) {
+				document.getElementById("users_list").innerHTML = `
+					<h2>No se han encontrado jugadores</h2>
+					<button onclick="get_new_players()">Recargar</button>
+				`;
+				console.log("recargando!");
+			} else {
+
+				for (let i = names.length; i >= 0; i--) {
+
+					document.getElementById("users_list").innerHTML = "";
+					document.getElementById("users_list").innerHTML += `
+						<li><button onclick="request_party('` + names[i] + `')">Conectar con: ` + names[i] + `</button></li>
+					`;
+				}
+			}
+		}
+
+		document.addEventListener("DOMContentLoaded", async () => {
+			get_new_players();
+
+		});
+	</script>
+</body>
+</html>

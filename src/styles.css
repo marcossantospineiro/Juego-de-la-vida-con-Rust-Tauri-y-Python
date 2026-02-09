@@ -1,0 +1,38 @@
+body {
+	background-color: grey;
+	padding: 0;
+	margin: 0;
+	height: 100vh;
+}
+
+#menu {
+	width: 20vw;
+	background-color: #333;
+	color: white;
+}
+
+#grid {
+	display: grid;
+	grid-template-columns: repeat(10, 1fr); /* 10 columnas */
+	width: 80vw;
+}
+
+#grid input[type="checkbox"] {
+	appearance: none;
+	-webkit-appearance: none;
+
+	width: 100%;
+	height: 100%;
+
+	margin: 0px;
+	padding: 5px;
+
+	background: #808080;
+	border: 3px solid #404040;
+
+	cursor: pointer;
+}
+
+#grid input[type="checkbox"]:checked {
+	background: #000000;
+}
