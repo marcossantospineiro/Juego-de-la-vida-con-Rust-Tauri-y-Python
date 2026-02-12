@@ -6,7 +6,7 @@
 	<link rel="stylesheet" href="../styles.css"/>
 	<title>Juego de la vida</title>
 </head>
-<body>
+<body onload="createGrid(factor)">
 	<style>
 
 		body {
@@ -16,33 +16,51 @@
 	</style>
 
 	<div id="menu">
-		<h2><button type="submit" onclick="getMarked()">Enviar</button></h2>
+		<h2><button type="submit" onclick="sendPositions()">Enviar</button></h2>
 	</div>
 	<div id="grid">
 	</div>
 
 	<script>
+		const { invoke } = window.__TAURI__.core;
+		const factor = 10;
 
-		for (let i = 0; i < 100; i++) {
-			document.getElementById("grid").innerHTML += `
-				<input type="checkbox">
-			`;
+		function createGrid(number) {
+			
+			inputs = "";
+
+			for (let i = 0; i < number**2; i++) {
+				inputs += `
+					<input type="checkbox">
+				`;
+			}
+			
+			document.getElementById("grid").innerHTML = inputs;
 		}
 
-		const getMarked = () => {
-
-		const all = document.querySelectorAll('#grid input[type="checkbox"]');
-		const index_vector = Array.from(all).map((checkbox, index) => checkbox.checked ? index : null).filter(index => index !== null);
-
-		let positions = []
-
-		for (let i = 0; i < index.length; i++) {
-			//positions[] // Podría estar bien encontrar una manera elegante de para meter los elementos en matriz
+		function createCoordinates(number, size) {
+			return [Math.floor(number / size), number % size]; // Muy elegante
 		}
 
-		console.log("Posiciones en el grid:", index_vector);
+		function getMarked() {
+
+			const all = document.querySelectorAll('#grid input[type="checkbox"]');
+			const index_vector = Array.from(all).map((checkbox, index) => checkbox.checked ? index : null).filter(index => index !== null);
+
+			let positions = [];
+
+			for (let i = 0; i < index_vector.length; i++) {
+				positions[i] = createCoordinates(index_vector[i], factor);
+			}
+
+			console.log("Posiciones en el grid:", positions);
+			return positions;
 	
-	};
+		};
+
+		async function sendPositions() {
+			await invoke("sendPositions", { positions: getMarked()});
+		}
 
 	</script>
 </body>
