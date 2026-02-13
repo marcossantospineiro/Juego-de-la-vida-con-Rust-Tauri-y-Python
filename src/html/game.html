@@ -47,19 +47,19 @@
 			const all = document.querySelectorAll('#grid input[type="checkbox"]');
 			const index_vector = Array.from(all).map((checkbox, index) => checkbox.checked ? index : null).filter(index => index !== null);
 
-			let positions = [];
+			//let positions = [];
 
-			for (let i = 0; i < index_vector.length; i++) {
-				positions[i] = createCoordinates(index_vector[i], factor);
-			}
+			//for (let i = 0; i < index_vector.length; i++) {
+			//	positions[i] = createCoordinates(index_vector[i], factor);
+			//}
 
-			console.log("Posiciones en el grid:", positions);
-			return positions;
+			console.log("Posiciones en el grid:", index_vector);
+			return Array.from(new Uint8Array(index_vector));
 	
 		};
 
 		async function sendPositions() {
-			await invoke("sendPositions", { positions: getMarked()});
+			await invoke("send_positions", { positions: getMarked()});
 		}
 
 	</script>

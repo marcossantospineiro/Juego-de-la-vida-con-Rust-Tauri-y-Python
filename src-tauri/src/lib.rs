@@ -1,196 +1,208 @@
-use std::net::{Ipv4Addr, SocketAddrV4};
-use tokio::io::{AsyncBufReadExt, BufReader, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio::sync::Mutex; // Usamos el Mutex de Tokio
-use serde::{Serialize, Deserialize};
-use std::time::Duration; // thread::sleep bloquea el runtime asíncrono, usaremos tokio::time
-use std::error::Error;
+use std::net::Ipv4Addr;
+use std::time::Duration;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader, AsyncWriteExt};
+use tokio::net::{TcpStream, tcp::{OwnedReadHalf, OwnedWriteHalf}};
+use tokio::sync::Mutex;
+use serde::{Serialize, Deserialize};
 use tauri::State;
+use std::error::Error;
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-
-// Estructuras auxiliares para los mensajes (El protocolo JSON)
 #[derive(Serialize, Deserialize, Debug)]
 struct Request {
 	command: String,
-	data: Option<String>, // Puede ser el nombre, u otro dato
-	status_code: bool
+	data: Option<String>,
+	status_code: bool,
 }
 
-// Respuesta para el servidor
 #[derive(Serialize, Deserialize, Debug)]
 struct Response {
-	//status: Option<String>,
 	command: String,
 	data: Option<Vec<String>>,
-	status_code: bool
+	status_code: bool,
 }
 
 struct Client {
 	name: String,
-	stream: BufReader<TcpStream>
+	reader: Mutex<BufReader<OwnedReadHalf>>, // protege lectura
+	writer: Mutex<OwnedWriteHalf>,           // protege escritura
 }
 
 impl Client {
-	pub async fn new(name: String, ip: String, port: u16) -> Self {
+	pub async fn new(name: String, ip: String, port: u16) -> Result<Self, Box<dyn Error + Send + Sync>> {
 		let ip_addr: Ipv4Addr = ip.parse().expect("IP inválida");
 		println!("Conectando con {}:{}", ip_addr, port);
 
 		let mut cont: u8 = 0;
 		let stream: TcpStream = loop {
-			match TcpStream::connect(SocketAddrV4::new(ip_addr, port)).await {
-				Ok(stream) => break stream,
+			match TcpStream::connect((ip_addr, port)).await {
+				Ok(s) => break s,
 				Err(e) => {
-					cont += 1;
+					cont = cont.saturating_add(1);
 					tokio::time::sleep(Duration::from_secs(1)).await;
-
 					if cont >= 255 {
-						panic!("No se ha podido conectar con el servidor: {}", e)
+						return Err(format!("No se ha podido conectar con el servidor: {}", e).into());
 					}
 				}
 			}
 		};
 
-		Client {
-			name: name,
-			stream: BufReader::new(stream)
-		}
+		let (read_half, write_half) = stream.into_split();
+
+		Ok(Client {
+			name,
+			reader: Mutex::new(BufReader::new(read_half)),
+			writer: Mutex::new(write_half),
+		})
 	}
 
-	async fn send_json(&mut self, req: Request) -> Result<(), Box<dyn Error>> {
-
+	pub async fn send_json(&self, req: Request) -> Result<(), Box<dyn Error + Send + Sync>> {
 		let mut json_data: String = serde_json::to_string(&req)?;
 		json_data.push('\n');
 
 		println!(">Cliente> {}", json_data);
 
-		self.stream.write_all(json_data.as_bytes()).await?;
-		self.stream.flush().await?;
-
-		return Ok(());
+		let mut writer: tokio::sync::MutexGuard<'_, OwnedWriteHalf> = self.writer.lock().await;
+		writer.write_all(json_data.as_bytes()).await?;
+		writer.flush().await?;
+		Ok(())
 	}
 
-	async fn recv_json(&mut self) -> Result<Response, Box<dyn Error>> {
+	pub async fn recv_json(&self) -> Result<Response, Box<dyn Error + Send + Sync>> {
+		let mut reader: tokio::sync::MutexGuard<'_, BufReader<OwnedReadHalf>> = self.reader.lock().await;
 		let mut line: String = String::new();
-		
-		// read_line lee hasta el delimitador \n y lo guarda en el String
-		let n: usize = self.stream.read_line(&mut line).await?;
-		
+
+		let n: usize = reader.read_line(&mut line).await?;
 		if n == 0 {
 			return Err("El servidor cerró la conexión".into());
 		}
 
-		let response_result: Result<Response, _> = serde_json::from_str(&line);
+		let response: Response = serde_json::from_str(&line).map_err(|e| {
+			println!("Error de deserialización: {}", e);
+			println!("Contenido problemático: '{}'", line);
+			e
+		})?;
 
-		// Parseamos directamente desde el String
-		let response: Response = match response_result {
-			Ok(res) => res,
-			Err(e) => {
-				println!("Error de deserialización: {}", e);
-				println!("Contenido problemático: '{}'", line);
-				return Err(e.into());
-			}
-    	};
-		
-		match serde_json::to_string(&response) {
-			Ok(pretty) => println!("<Server< {}", pretty),
-			Err(e) => println!("Error al imprimir el JSON: {}", e),
-    	}
-
-		return Ok(response);
+		println!("<Server< {}", serde_json::to_string(&response).unwrap_or_default());
+		Ok(response)
 	}
 }
 
 struct AppState {
-	// Arc<Mutex<T>> es el estándar para compartir estado mutable asíncrono
-	client: Arc<Mutex<Option<Client>>>,
+	// Entender este tipo de dato es un poco raro. Lo podemos entender como si el profesor escribiese en una pizarra, echásemos un vistazo (Arc), modificásemos nosotros
+	// Lo que hemos visto (Mutex), pero al entrar en nuestra memoria, comprobásemos si hemos visto letras, y si es así vamos en orden
+	// Arc para acceder, Mutex para editar
+	client: Arc<Mutex<Option<Arc<Client>>>>,
 }
 
 #[tauri::command]
 async fn init(name: &str, state: State<'_, AppState>) -> Result<(), String> {
-	let mut client: Client = Client::new(name.to_string(), "127.0.0.1".to_string(), 5005).await;
+
+	let client: Client = Client::new(name.to_string(), "127.0.0.1".to_string(), 5005).await.map_err(|e| e.to_string())?;
+	let client: Arc<Client> = Arc::new(client);
 
 	let req: Request = Request {
 		command: "init".to_string(),
 		data: Some(client.name.clone()),
 		status_code: true,
 	};
-	
-	client.send_json(req).await.map_err(|e: Box<dyn Error>| e.to_string())?;
-	
-	let response: Response = client.recv_json().await.map_err(|e: Box<dyn Error>| e.to_string())?;
+
+	client.send_json(req).await.map_err(|e| e.to_string())?;
+	let response: Response = client.recv_json().await.map_err(|e| e.to_string())?;
 
 	if let Some(data) = response.data {
 		if !data.is_empty() && data[0] == "Nombre repetido" {
-			println!("Nombre duplicado en el servidor, {}", response.status_code.to_string());
-			return Err("Ese nombre no está permitido. Se supone que este error no se debería poder ver".into());
+			return Err("Ese nombre no está permitido.".into());
 		}
 	}
 
-	let mut drawer: tokio::sync::MutexGuard<'_, Option<Client>> = state.client.lock().await;
-	*drawer = Some(client);
+	// Guarda el Arc<Client> en el estado, esto causa breve lock
+	{
+		let mut guard: tokio::sync::MutexGuard<'_, Option<Arc<Client>>> = state.client.lock().await;
+		*guard = Some(client.clone());
+	}
 
-	return Ok(());
+	Ok(())
 }
 
 #[tauri::command]
 async fn other_players(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-	let mut drawer: tokio::sync::MutexGuard<'_, Option<Client>> = state.client.lock().await;
 
-	if let Some(client) = drawer.as_mut() {
-		// Creamos la Request (adaptando tu lógica anterior a JSON)
-		let req: Request = Request {
-			command: "other_players".to_string(),
-			data: None,
-			status_code: true
-		};
+	// Cogemos rápidamente el Arc<Client> y soltamos el mutex del state. Al ser tan rápido no genera blockeos (presuntamente)
+	let client_arc: Arc<Client> = {
+		let guard: tokio::sync::MutexGuard<'_, Option<Arc<Client>>> = state.client.lock().await;
+		guard.as_ref().cloned().ok_or("Cliente no inicializado".to_string())?
+	};
 
-		client.send_json(req).await.map_err(|e: Box<dyn Error>| e.to_string())?;
-		
-		let response: Response = client.recv_json().await.map_err(|e: Box<dyn Error>| e.to_string())?;
-		
-		// Devolvemos la lista de jugadores si existe en la respuesta JSON
-		return Ok(response.data.unwrap_or_default());
-	} else {
-		return Err("Cliente no inicializado".into());
-	}
+	let req: Request = Request {
+		command: "other_players".to_string(),
+		data: None,
+		status_code: true, 
+	};
+
+	client_arc.send_json(req).await.map_err(|e| e.to_string())?;
+	let response: Response = client_arc.recv_json().await.map_err(|e| e.to_string())?; // Se elimina el client_arc
+	Ok(response.data.unwrap_or_default())
 }
 
 #[tauri::command]
-async fn request_party(state: State<'_, AppState>, name: &str) -> Result<bool, String> {
-	let mut drawer: tokio::sync::MutexGuard<'_, Option<Client>> = state.client.lock().await;
+async fn request_party(name: &str, state: State<'_, AppState>) -> Result<bool, String> {
 
-	if let Some(client) = drawer.as_mut() {
-		let req: Request = Request {
-			command: "request_party".to_string(),
-			data: Some(name.to_string()),
-			status_code: true
-		};
+	let client_arc: Arc<Client> = {
+		let guard: tokio::sync::MutexGuard<'_, Option<Arc<Client>>> = state.client.lock().await;
+		guard.as_ref().cloned().ok_or("Cliente no inicializado".to_string())?
+	};
 
-		client.send_json(req).await.map_err(|e: Box<dyn Error>| e.to_string())?;
-		
-		let response: Response = client.recv_json().await.map_err(|e: Box<dyn Error>| e.to_string())?;
+	let req: Request = Request {
+		command: "request_party".to_string(),
+		data: Some(name.to_string()),
+		status_code: true
+	};
 
-		if response.data.unwrap_or_default()[0] == "party_accepted" { 
-			return Ok(true);
-		}
-		return Ok(false); // Habría que manejar en algún momento qué pasaría si la fiesta no inicia
-	} else {
-		return Err("Cliente no inicializado".into());
-	}
-	
+	client_arc.send_json(req).await.map_err(|e| e.to_string())?;
+	let response: Response = client_arc.recv_json().await.map_err(|e| e.to_string())?;
+
+	Ok(response.data.unwrap_or_default().get(0).map(|s| s == "party_accepted").unwrap_or(false))
 }
+
+fn plane_to_matrix(positions_plane: Vec<u8>) -> [[u8; 10]; 10] {
+
+	println!("Longitud recibida: {}", positions_plane.len());
+
+	let mut positions_matrix: [[u8; 10]; 10] = [[0; 10]; 10];
+	for n in positions_plane {
+
+		let n: usize = n as usize; // Es un poco raro redefinir la variable del bucle, pero mola. Debe ser usize para ser usado como índice. 32 o 64 bits
+		positions_matrix[n / 10][n % 10] = 1 // row = x, col = y
+	}
+
+	positions_matrix
+}
+
+#[tauri::command]
+async fn send_positions(positions: Vec<u8>, state: State<'_, AppState>) -> Result<bool, String> {
+
+	println!("Invocado!");
+
+	let client_arc: Option<Arc<Client>> = {
+		let guard: tokio::sync::MutexGuard<'_, Option<Arc<Client>>> = state.client.lock().await;
+		guard.as_ref().cloned()
+	};
+
+	let positions: [[u8; 10]; 10] = plane_to_matrix(positions);
+	println!("{:?}", positions);
+	Ok(true)
+}
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        // Inicializamos el estado correctamente con la estructura
-        .manage(AppState { 
-            client: Arc::new(Mutex::new(None)) 
-        }) 
-        .invoke_handler(tauri::generate_handler![init, other_players, request_party])
-        .run(tauri::generate_context!())
-        .expect("Error mientras se iniciaba la aplicación");
+	tauri::Builder::default()
+		.plugin(tauri_plugin_opener::init())
+		.manage(AppState { 
+			client: Arc::new(Mutex::new(None)) 
+		}) 
+		.invoke_handler(tauri::generate_handler![init, other_players, request_party, send_positions])
+		.run(tauri::generate_context!())
+		.expect("Error mientras se iniciaba la aplicación");
 }
