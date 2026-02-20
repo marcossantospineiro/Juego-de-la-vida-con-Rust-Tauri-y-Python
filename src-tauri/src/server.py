@@ -1,5 +1,53 @@
 import asyncio
 import json
+from array import array
+
+class Universe():
+	def __init__(self, number_rows, number_columns, players):
+		self.number_rows = number_rows
+		self.number_columns = number_columns
+		self.players = players
+
+		self.grid = array('b', [0]*100)
+
+	def matrix_to_plane(self, x, y):
+		return [y*self.number_columns + x, self.grid[y*self.number_columns + x]]
+	
+	def plane_to_matrix(self, n):
+		return [n % self.number_rows, n // self.number_columns, self.grid[n]]
+	
+	def update_grid(self, x, y, data):
+		self.grid[y*self.number_columns + x] = data
+
+	def get_neigbhor(self, cell, dir): # dir sigue el sistema horario
+
+		# -------------
+		# - 7 - 0 - 1 -
+		# - 6 - X - 2 -
+		# - 5 - 4 - 3 -
+		# -------------
+
+		# La ventaja de este sistema es que permite el `for`
+		# También ayuda a simplificar cálculos (un poquito)
+
+		match dir:
+			case 7 | 0 | 1:
+				cell -= self.number_columns
+			case 1 | 2 | 3:
+				cell += 1
+			case 5 | 4 | 3:
+				cell += self.number_columns
+			case 5 | 6 | 7:
+				cell -= 1
+		
+		return cell
+
+universo = Universe(10, 10, ["Jaime"])
+universo.matrix_to_plane(0, 1)
+universo.update_grid(0, 1, 2)
+print(universo.plane_to_matrix(universo.get_neigbhor(0, 4)))
+
+exit()
 
 class Player():
 	def __init__(self, reader, writer, server):

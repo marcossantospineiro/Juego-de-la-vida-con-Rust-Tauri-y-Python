@@ -165,7 +165,10 @@ async fn request_party(name: &str, state: State<'_, AppState>) -> Result<bool, S
 	Ok(response.data.unwrap_or_default().get(0).map(|s| s == "party_accepted").unwrap_or(false))
 }
 
-fn plane_to_matrix(positions_plane: Vec<u8>) -> [[u8; 10]; 10] {
+// Temporalmente en deshuso, puede que incluso para siempre.
+// De decidido usar vectores planos para los cálculos de las posiciones
+// Porque hacer grafos o listas multi-enlazadas en rust en complicado
+fn _plane_to_matrix(positions_plane: Vec<u8>) -> [[u8; 10]; 10] {
 
 	println!("Longitud recibida: {}", positions_plane.len());
 
@@ -182,15 +185,23 @@ fn plane_to_matrix(positions_plane: Vec<u8>) -> [[u8; 10]; 10] {
 #[tauri::command]
 async fn send_positions(positions: Vec<u8>, state: State<'_, AppState>) -> Result<bool, String> {
 
-	println!("Invocado!");
-
-	let client_arc: Option<Arc<Client>> = {
+	let client_arc: Arc<Client> = {
 		let guard: tokio::sync::MutexGuard<'_, Option<Arc<Client>>> = state.client.lock().await;
-		guard.as_ref().cloned()
+		guard.as_ref().cloned().ok_or("Cliente no inicializado".to_string())?
 	};
 
-	let positions: [[u8; 10]; 10] = plane_to_matrix(positions);
+	//let positions: [[u8; 10]; 10] = plane_to_matrix(positions);
+	//let positions: [u8; 10] = [0; 10];
+
 	println!("{:?}", positions);
+
+	let req: Request = Request {
+		command: "send_position".to_string(),
+		data: Some(positions.iter().map(|n| n.to_string()).collect::<Vec<String>>().join(",")),
+		status_code: true
+	};
+
+	client_arc.send_json(req).await.map_err(|e| e.to_string())?;
 	Ok(true)
 }
 
